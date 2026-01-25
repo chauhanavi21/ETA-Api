@@ -88,3 +88,21 @@ export async function getSummaryByUserId(req, res) {
       res.status(500).json({ message: "Internal server error" });
     }
 }
+
+export async function deleteAllUserTransactions(req, res) {
+  try {
+    const { userId } = req.params;
+
+    const result = await sql`
+      DELETE FROM transactions WHERE user_id = ${userId} RETURNING *
+    `;
+
+    res.status(200).json({
+      message: "All transactions deleted successfully",
+      count: result.length,
+    });
+  } catch (error) {
+    console.log("Error deleting user transactions", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
