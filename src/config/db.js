@@ -32,6 +32,7 @@ export async function initDB() {
       id SERIAL PRIMARY KEY,
       group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
       user_id VARCHAR(255) NOT NULL,
+      user_name VARCHAR(255) NOT NULL,
       joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(group_id, user_id)
     )`;

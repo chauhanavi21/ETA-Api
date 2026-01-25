@@ -13,7 +13,7 @@ function generateGroupCode() {
 // Create a new group
 export async function createGroup(req, res) {
   try {
-    const { name, userId, currency = "USD" } = req.body;
+    const { name, userId, userName, currency = "USD" } = req.body;
 
     if (!name || !userId) {
       return res.status(400).json({ message: "Name and userId are required" });
@@ -47,8 +47,9 @@ export async function createGroup(req, res) {
 
     // Add creator as first member
     await sql`
-      INSERT INTO group_members(group_id, user_id)
-      VALUES (${group[0].id}, ${userId})
+      INSERT INTO group_members(group_id, user_id, user_name)
+      VALUES (${group[0].id}, ${userId}, ${userName || 'User'})
+      ON CONFLICT (group_id, user_id) DO UPDATE SET user_name = ${userName || 'User'}
     `;
 
     res.status(201).json(group[0]);
@@ -61,7 +62,7 @@ export async function createGroup(req, res) {
 // Join group via code
 export async function joinGroup(req, res) {
   try {
-    const { code, userId } = req.body;
+    const { code, userId, userName } = req.body;
 
     if (!code || !userId) {
       return res.status(400).json({ message: "Code and userId are required" });
@@ -86,8 +87,8 @@ export async function joinGroup(req, res) {
 
     // Add member
     await sql`
-      INSERT INTO group_members(group_id, user_id)
-      VALUES (${group[0].id}, ${userId})
+      INSERT INTO group_members(group_id, user_id, user_name)
+      VALUES (${group[0].id}, ${userId}, ${userName || 'User'})
     `;
 
     res.status(200).json(group[0]);
@@ -123,7 +124,7 @@ export async function getGroupMembers(req, res) {
     const { groupId } = req.params;
 
     const members = await sql`
-      SELECT user_id, joined_at
+      SELECT user_id, user_name, joined_at
       FROM group_members
       WHERE group_id = ${groupId}
       ORDER BY joined_at ASC
@@ -223,9 +224,15 @@ export async function getExpenseSplits(req, res) {
     const { expenseId } = req.params;
 
     const splits = await sql`
-      SELECT * FROM expense_splits
-      WHERE expense_id = ${expenseId}
-      ORDER BY user_id
+      SELECT 
+        es.*,
+        gm.user_name,
+        ge.group_id
+      FROM expense_splits es
+      INNER JOIN group_expenses ge ON es.expense_id = ge.id
+      LEFT JOIN group_members gm ON es.user_id = gm.user_id AND gm.group_id = ge.group_id
+      WHERE es.expense_id = ${expenseId}
+      ORDER BY gm.user_name
     `;
 
     res.status(200).json(splits);
@@ -271,25 +278,27 @@ export async function getGroupBalance(req, res) {
 
     // Get detailed breakdown
     const owesMe = await sql`
-      SELECT es.user_id, SUM(es.amount_owed) as total
+      SELECT es.user_id, gm.user_name, SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
+      LEFT JOIN group_members gm ON es.user_id = gm.user_id AND gm.group_id = ${groupId}
       WHERE ge.group_id = ${groupId} 
         AND ge.paid_by_user_id = ${userId}
         AND es.user_id != ${userId}
         AND es.is_settled = false
-      GROUP BY es.user_id
+      GROUP BY es.user_id, gm.user_name
     `;
 
     const iOwe = await sql`
-      SELECT ge.paid_by_user_id as user_id, SUM(es.amount_owed) as total
+      SELECT ge.paid_by_user_id as user_id, gm.user_name, SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
+      LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ${groupId}
       WHERE ge.group_id = ${groupId}
         AND es.user_id = ${userId}
         AND ge.paid_by_user_id != ${userId}
         AND es.is_settled = false
-      GROUP BY ge.paid_by_user_id
+      GROUP BY ge.paid_by_user_id, gm.user_name
     `;
 
     res.status(200).json({
@@ -298,15 +307,60 @@ export async function getGroupBalance(req, res) {
       netBalance: totalPaid - totalOwed,
       owesMe: owesMe.map((o) => ({
         userId: o.user_id,
+        userName: o.user_name || o.user_id,
         amount: parseFloat(o.total),
       })),
       iOwe: iOwe.map((o) => ({
         userId: o.user_id,
+        userName: o.user_name || o.user_id,
         amount: parseFloat(o.total),
       })),
     });
   } catch (error) {
     console.log("Error getting group balance", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// Settle up debts between two users in a group
+export async function settleUp(req, res) {
+  try {
+    const { groupId, fromUserId, toUserId } = req.body;
+
+    if (!groupId || !fromUserId || !toUserId) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    // Get all unsettled splits where fromUserId owes toUserId
+    const splits = await sql`
+      SELECT es.*
+      FROM expense_splits es
+      INNER JOIN group_expenses ge ON es.expense_id = ge.id
+      WHERE ge.group_id = ${groupId}
+        AND ge.paid_by_user_id = ${toUserId}
+        AND es.user_id = ${fromUserId}
+        AND es.is_settled = false
+    `;
+
+    if (splits.length === 0) {
+      return res.status(404).json({ message: "No debts to settle" });
+    }
+
+    // Mark all splits as settled
+    for (const split of splits) {
+      await sql`
+        UPDATE expense_splits
+        SET is_settled = true, settled_at = CURRENT_TIMESTAMP
+        WHERE id = ${split.id}
+      `;
+    }
+
+    res.status(200).json({
+      message: "Successfully settled up",
+      settledCount: splits.length,
+    });
+  } catch (error) {
+    console.log("Error settling up", error);
     res.status(500).json({ message: "Internal server error" });
   }
 }

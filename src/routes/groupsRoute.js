@@ -9,6 +9,7 @@ import {
   getGroupExpenses,
   getExpenseSplits,
   getGroupBalance,
+  settleUp,
 } from "../controllers/groupsController.js";
 
 const router = express.Router();
@@ -27,5 +28,6 @@ router.get("/expenses/:expenseId/splits", getExpenseSplits);
 
 // Balance
 router.get("/:groupId/balance/:userId", getGroupBalance);
+router.post("/settle", settleUp);
 
 export default router;
