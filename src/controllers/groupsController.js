@@ -49,7 +49,8 @@ export async function createGroup(req, res) {
     await sql`
       INSERT INTO group_members(group_id, user_id, user_name)
       VALUES (${group[0].id}, ${userId}, ${userName || 'User'})
-      ON CONFLICT (group_id, user_id) DO UPDATE SET user_name = ${userName || 'User'}
+      ON CONFLICT (group_id, user_id) 
+      DO UPDATE SET user_name = COALESCE(${userName}, group_members.user_name, 'User')
     `;
 
     res.status(201).json(group[0]);
@@ -124,7 +125,10 @@ export async function getGroupMembers(req, res) {
     const { groupId } = req.params;
 
     const members = await sql`
-      SELECT user_id, user_name, joined_at
+      SELECT 
+        user_id, 
+        COALESCE(user_name, 'User') as user_name, 
+        joined_at
       FROM group_members
       WHERE group_id = ${groupId}
       ORDER BY joined_at ASC
@@ -206,9 +210,13 @@ export async function getGroupExpenses(req, res) {
     const { groupId } = req.params;
 
     const expenses = await sql`
-      SELECT * FROM group_expenses
-      WHERE group_id = ${groupId}
-      ORDER BY created_at DESC
+      SELECT 
+        ge.*,
+        COALESCE(gm.user_name, ge.paid_by_user_id) as paid_by_user_name
+      FROM group_expenses ge
+      LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ge.group_id
+      WHERE ge.group_id = ${groupId}
+      ORDER BY ge.created_at DESC
     `;
 
     res.status(200).json(expenses);
@@ -226,13 +234,13 @@ export async function getExpenseSplits(req, res) {
     const splits = await sql`
       SELECT 
         es.*,
-        gm.user_name,
+        COALESCE(gm.user_name, es.user_id) as user_name,
         ge.group_id
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
       LEFT JOIN group_members gm ON es.user_id = gm.user_id AND gm.group_id = ge.group_id
       WHERE es.expense_id = ${expenseId}
-      ORDER BY gm.user_name
+      ORDER BY COALESCE(gm.user_name, es.user_id)
     `;
 
     res.status(200).json(splits);
@@ -249,7 +257,10 @@ export async function getGroupBalance(req, res) {
 
     // Get detailed breakdown - others who owe the user
     const owesMe = await sql`
-      SELECT es.user_id, gm.user_name, SUM(es.amount_owed) as total
+      SELECT 
+        es.user_id, 
+        COALESCE(gm.user_name, es.user_id) as user_name, 
+        SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
       LEFT JOIN group_members gm ON es.user_id = gm.user_id AND gm.group_id = ${groupId}
@@ -262,7 +273,10 @@ export async function getGroupBalance(req, res) {
 
     // Get detailed breakdown - what user owes others
     const iOwe = await sql`
-      SELECT ge.paid_by_user_id as user_id, gm.user_name, SUM(es.amount_owed) as total
+      SELECT 
+        ge.paid_by_user_id as user_id, 
+        COALESCE(gm.user_name, ge.paid_by_user_id) as user_name, 
+        SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
       LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ${groupId}

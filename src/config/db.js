@@ -59,6 +59,22 @@ export async function initDB() {
       UNIQUE(expense_id, user_id)
     )`;
 
+    // Migration: Add user_name column if it doesn't exist
+    try {
+      await sql`ALTER TABLE group_members ADD COLUMN IF NOT EXISTS user_name VARCHAR(255) DEFAULT 'User'`;
+      console.log("Migration: user_name column added/verified");
+    } catch (migrationError) {
+      console.log("Migration note:", migrationError.message);
+    }
+
+    // Update existing records with empty user_name
+    try {
+      await sql`UPDATE group_members SET user_name = 'User' WHERE user_name IS NULL OR user_name = ''`;
+      console.log("Migration: Updated existing records with default user_name");
+    } catch (updateError) {
+      console.log("Migration update note:", updateError.message);
+    }
+
     console.log("Database initialized successfully");
   } catch (error) {
     console.log("Error initializing DB", error);
