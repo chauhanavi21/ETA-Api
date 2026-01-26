@@ -10,6 +10,7 @@ import {
   getExpenseSplits,
   getGroupBalance,
   settleUp,
+  leaveGroup,
 } from "../controllers/groupsController.js";
 
 const router = express.Router();
@@ -17,6 +18,7 @@ const router = express.Router();
 // Group operations
 router.post("/", createGroup);
 router.post("/join", joinGroup);
+router.post("/leave", leaveGroup);
 router.get("/user/:userId", getUserGroups);
 router.get("/:groupId", getGroupById);
 router.get("/:groupId/members", getGroupMembers);

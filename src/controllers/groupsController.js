@@ -355,3 +355,69 @@ export async function settleUp(req, res) {
     res.status(500).json({ message: "Internal server error" });
   }
 }
+
+// Leave a group
+export async function leaveGroup(req, res) {
+  try {
+    const { groupId, userId } = req.body;
+
+    if (!groupId || !userId) {
+      return res.status(400).json({ message: "Group ID and User ID are required" });
+    }
+
+    // Check if user is a member
+    const member = await sql`
+      SELECT * FROM group_members 
+      WHERE group_id = ${groupId} AND user_id = ${userId}
+    `;
+
+    if (member.length === 0) {
+      return res.status(404).json({ message: "You are not a member of this group" });
+    }
+
+    // Check for unsettled debts
+    const unsettledDebts = await sql`
+      SELECT es.*
+      FROM expense_splits es
+      INNER JOIN group_expenses ge ON es.expense_id = ge.id
+      WHERE ge.group_id = ${groupId}
+        AND (es.user_id = ${userId} OR ge.paid_by_user_id = ${userId})
+        AND es.is_settled = false
+    `;
+
+    if (unsettledDebts.length > 0) {
+      return res.status(400).json({ 
+        message: "You have unsettled expenses in this group. Please settle up before leaving.",
+        hasDebts: true
+      });
+    }
+
+    // Remove user from group
+    await sql`
+      DELETE FROM group_members 
+      WHERE group_id = ${groupId} AND user_id = ${userId}
+    `;
+
+    // Check if group is now empty
+    const remainingMembers = await sql`
+      SELECT * FROM group_members WHERE group_id = ${groupId}
+    `;
+
+    // If no members left, delete the group
+    if (remainingMembers.length === 0) {
+      await sql`DELETE FROM groups WHERE id = ${groupId}`;
+      return res.status(200).json({ 
+        message: "Successfully left group. Group was deleted as you were the last member.",
+        groupDeleted: true
+      });
+    }
+
+    res.status(200).json({ 
+      message: "Successfully left group",
+      groupDeleted: false
+    });
+  } catch (error) {
+    console.log("Error leaving group", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
