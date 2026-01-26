@@ -247,36 +247,7 @@ export async function getGroupBalance(req, res) {
   try {
     const { groupId, userId } = req.params;
 
-    // Get all expenses where user paid
-    const paidExpenses = await sql`
-      SELECT ge.id, ge.amount, ge.paid_by_user_id
-      FROM group_expenses ge
-      WHERE ge.group_id = ${groupId} AND ge.paid_by_user_id = ${userId}
-    `;
-
-    // Get all splits where user owes
-    const owedSplits = await sql`
-      SELECT es.amount_owed, es.is_settled, ge.paid_by_user_id
-      FROM expense_splits es
-      INNER JOIN group_expenses ge ON es.expense_id = ge.id
-      WHERE ge.group_id = ${groupId} AND es.user_id = ${userId}
-    `;
-
-    // Calculate balance
-    let totalPaid = 0;
-    let totalOwed = 0;
-
-    for (const expense of paidExpenses) {
-      totalPaid += parseFloat(expense.amount);
-    }
-
-    for (const split of owedSplits) {
-      if (!split.is_settled) {
-        totalOwed += parseFloat(split.amount_owed);
-      }
-    }
-
-    // Get detailed breakdown
+    // Get detailed breakdown - others who owe the user
     const owesMe = await sql`
       SELECT es.user_id, gm.user_name, SUM(es.amount_owed) as total
       FROM expense_splits es
@@ -289,6 +260,7 @@ export async function getGroupBalance(req, res) {
       GROUP BY es.user_id, gm.user_name
     `;
 
+    // Get detailed breakdown - what user owes others
     const iOwe = await sql`
       SELECT ge.paid_by_user_id as user_id, gm.user_name, SUM(es.amount_owed) as total
       FROM expense_splits es
@@ -301,10 +273,15 @@ export async function getGroupBalance(req, res) {
       GROUP BY ge.paid_by_user_id, gm.user_name
     `;
 
+    // Calculate totals
+    const totalLent = owesMe.reduce((sum, o) => sum + parseFloat(o.total), 0);
+    const totalBorrowed = iOwe.reduce((sum, o) => sum + parseFloat(o.total), 0);
+    const netBalance = totalLent - totalBorrowed;
+
     res.status(200).json({
-      totalPaid,
-      totalOwed,
-      netBalance: totalPaid - totalOwed,
+      totalPaid: totalLent,  // What others owe you (you lent)
+      totalOwed: totalBorrowed,  // What you owe others (you borrowed)
+      netBalance: netBalance,
       owesMe: owesMe.map((o) => ({
         userId: o.user_id,
         userName: o.user_name || o.user_id,
