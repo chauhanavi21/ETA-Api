@@ -418,7 +418,7 @@ export async function getGroupBalance(req, res) {
     const owesMe = await sql`
       SELECT 
         es.user_id, 
-        COALESCE(gm.user_name, u.user_name, es.user_id) as user_name, 
+        COALESCE(MAX(gm.user_name), MAX(u.user_name), es.user_id) as user_name, 
         SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
@@ -428,14 +428,14 @@ export async function getGroupBalance(req, res) {
         AND ge.paid_by_user_id = ${userId}
         AND es.user_id != ${userId}
         AND es.is_settled = false
-      GROUP BY es.user_id, gm.user_name
+      GROUP BY es.user_id
     `;
 
     // Get detailed breakdown - what user owes others
     const iOwe = await sql`
       SELECT 
         ge.paid_by_user_id as user_id, 
-        COALESCE(gm.user_name, u.user_name, ge.paid_by_user_id) as user_name, 
+        COALESCE(MAX(gm.user_name), MAX(u.user_name), ge.paid_by_user_id) as user_name, 
         SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
@@ -445,7 +445,7 @@ export async function getGroupBalance(req, res) {
         AND es.user_id = ${userId}
         AND ge.paid_by_user_id != ${userId}
         AND es.is_settled = false
-      GROUP BY ge.paid_by_user_id, gm.user_name
+      GROUP BY ge.paid_by_user_id
     `;
 
     // Calculate totals
