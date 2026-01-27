@@ -162,15 +162,16 @@ export async function getGroupMembers(req, res) {
 
     const members = await sql`
       SELECT 
-        user_id, 
-        COALESCE(gm.user_name, u.user_name, 'User') as user_name, 
-        joined_at
+        gm.user_id, 
+        COALESCE(gm.user_name, u.user_name, gm.user_id) as user_name, 
+        gm.joined_at
       FROM group_members gm
       LEFT JOIN users u ON gm.user_id = u.user_id
       WHERE gm.group_id = ${groupId}
-      ORDER BY joined_at ASC
+      ORDER BY gm.joined_at ASC
     `;
 
+    console.log(`getGroupMembers for group ${groupId}:`, members.length, 'members');
     res.status(200).json(members);
   } catch (error) {
     console.log("Error getting group members", error);
