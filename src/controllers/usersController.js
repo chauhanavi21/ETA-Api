@@ -14,6 +14,14 @@ export async function updateUserName(req, res) {
       return res.status(400).json({ message: "User name cannot be empty" });
     }
 
+    // Update canonical users table
+    await sql`
+      INSERT INTO users (user_id, user_name)
+      VALUES (${userId}, ${trimmedName})
+      ON CONFLICT (user_id)
+      DO UPDATE SET user_name = EXCLUDED.user_name, updated_at = CURRENT_TIMESTAMP
+    `;
+
     // Update user_name in group_members table for all groups this user is in
     const updatedMembers = await sql`
       UPDATE group_members
@@ -50,10 +58,9 @@ export async function getUserProfile(req, res) {
       WHERE user_id = ${userId}
     `;
 
-    // Get user's current name from any group membership
     const userInfo = await sql`
       SELECT user_name
-      FROM group_members
+      FROM users
       WHERE user_id = ${userId}
       LIMIT 1
     `;

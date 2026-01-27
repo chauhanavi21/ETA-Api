@@ -5,6 +5,7 @@ import {
   getUserGroups,
   getGroupMembers,
   getGroupById,
+  updateGroup,
   addGroupExpense,
   updateGroupExpense,
   deleteGroupExpense,
@@ -24,6 +25,7 @@ router.post("/join", joinGroup);
 router.post("/leave", leaveGroup);
 router.get("/user/:userId", getUserGroups);
 router.get("/:groupId", getGroupById);
+router.put("/:groupId", updateGroup);
 router.get("/:groupId/members", getGroupMembers);
 
 // Expense operations

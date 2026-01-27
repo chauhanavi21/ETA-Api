@@ -54,6 +54,16 @@ export async function createGroup(req, res) {
       DO UPDATE SET user_name = COALESCE(${userName}, group_members.user_name, 'User')
     `;
 
+    // Upsert canonical user name
+    if (userName && String(userName).trim()) {
+      await sql`
+        INSERT INTO users (user_id, user_name)
+        VALUES (${userId}, ${String(userName).trim()})
+        ON CONFLICT (user_id)
+        DO UPDATE SET user_name = EXCLUDED.user_name, updated_at = CURRENT_TIMESTAMP
+      `;
+    }
+
     res.status(201).json(group[0]);
   } catch (error) {
     console.log("Error creating group", error);
@@ -92,6 +102,16 @@ export async function joinGroup(req, res) {
       INSERT INTO group_members(group_id, user_id, user_name)
       VALUES (${group[0].id}, ${userId}, ${userName || 'User'})
     `;
+
+    // Upsert canonical user name
+    if (userName && String(userName).trim()) {
+      await sql`
+        INSERT INTO users (user_id, user_name)
+        VALUES (${userId}, ${String(userName).trim()})
+        ON CONFLICT (user_id)
+        DO UPDATE SET user_name = EXCLUDED.user_name, updated_at = CURRENT_TIMESTAMP
+      `;
+    }
 
     // Send notification to group members
     await notifyGroupMembers(
@@ -143,10 +163,11 @@ export async function getGroupMembers(req, res) {
     const members = await sql`
       SELECT 
         user_id, 
-        COALESCE(user_name, 'User') as user_name, 
+        COALESCE(gm.user_name, u.user_name, 'User') as user_name, 
         joined_at
-      FROM group_members
-      WHERE group_id = ${groupId}
+      FROM group_members gm
+      LEFT JOIN users u ON gm.user_id = u.user_id
+      WHERE gm.group_id = ${groupId}
       ORDER BY joined_at ASC
     `;
 
@@ -171,6 +192,51 @@ export async function getGroupById(req, res) {
     res.status(200).json(group[0]);
   } catch (error) {
     console.log("Error getting group", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// Update group details (currently supports renaming)
+export async function updateGroup(req, res) {
+  try {
+    const { groupId } = req.params;
+    const { name, userId } = req.body;
+
+    const trimmedName = (name || "").trim();
+    if (!trimmedName) {
+      return res.status(400).json({ message: "Group name is required" });
+    }
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+
+    // Ensure requester is a member of the group
+    const member = await sql`
+      SELECT 1
+      FROM group_members
+      WHERE group_id = ${groupId} AND user_id = ${userId}
+      LIMIT 1
+    `;
+
+    if (member.length === 0) {
+      return res.status(403).json({ message: "You are not a member of this group" });
+    }
+
+    const updated = await sql`
+      UPDATE groups
+      SET name = ${trimmedName}
+      WHERE id = ${groupId}
+      RETURNING *
+    `;
+
+    if (updated.length === 0) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
+    res.status(200).json(updated[0]);
+  } catch (error) {
+    console.log("Error updating group", error);
     res.status(500).json({ message: "Internal server error" });
   }
 }
@@ -259,10 +325,14 @@ export async function updateGroupExpense(req, res) {
 
     // Get expense details and group info for notification
     const expenseDetails = await sql`
-      SELECT ge.*, g.name as group_name, gm.user_name as payer_name
+      SELECT 
+        ge.*, 
+        g.name as group_name,
+        COALESCE(gm.user_name, u.user_name) as payer_name
       FROM group_expenses ge
       INNER JOIN groups g ON ge.group_id = g.id
       LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ge.group_id
+      LEFT JOIN users u ON ge.paid_by_user_id = u.user_id
       WHERE ge.id = ${expenseId}
     `;
 
@@ -299,9 +369,10 @@ export async function getGroupExpenses(req, res) {
     const expenses = await sql`
       SELECT 
         ge.*,
-        COALESCE(gm.user_name, ge.paid_by_user_id) as paid_by_user_name
+        COALESCE(gm.user_name, u.user_name, ge.paid_by_user_id) as paid_by_user_name
       FROM group_expenses ge
       LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ge.group_id
+      LEFT JOIN users u ON ge.paid_by_user_id = u.user_id
       WHERE ge.group_id = ${groupId}
       ORDER BY ge.created_at DESC
     `;
@@ -321,13 +392,14 @@ export async function getExpenseSplits(req, res) {
     const splits = await sql`
       SELECT 
         es.*,
-        COALESCE(gm.user_name, es.user_id) as user_name,
+        COALESCE(gm.user_name, u.user_name, es.user_id) as user_name,
         ge.group_id
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
       LEFT JOIN group_members gm ON es.user_id = gm.user_id AND gm.group_id = ge.group_id
+      LEFT JOIN users u ON es.user_id = u.user_id
       WHERE es.expense_id = ${expenseId}
-      ORDER BY COALESCE(gm.user_name, es.user_id)
+      ORDER BY COALESCE(gm.user_name, u.user_name, es.user_id)
     `;
 
     res.status(200).json(splits);
@@ -346,11 +418,12 @@ export async function getGroupBalance(req, res) {
     const owesMe = await sql`
       SELECT 
         es.user_id, 
-        COALESCE(gm.user_name, es.user_id) as user_name, 
+        COALESCE(gm.user_name, u.user_name, es.user_id) as user_name, 
         SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
       LEFT JOIN group_members gm ON es.user_id = gm.user_id AND gm.group_id = ${groupId}
+      LEFT JOIN users u ON es.user_id = u.user_id
       WHERE ge.group_id = ${groupId} 
         AND ge.paid_by_user_id = ${userId}
         AND es.user_id != ${userId}
@@ -362,11 +435,12 @@ export async function getGroupBalance(req, res) {
     const iOwe = await sql`
       SELECT 
         ge.paid_by_user_id as user_id, 
-        COALESCE(gm.user_name, ge.paid_by_user_id) as user_name, 
+        COALESCE(gm.user_name, u.user_name, ge.paid_by_user_id) as user_name, 
         SUM(es.amount_owed) as total
       FROM expense_splits es
       INNER JOIN group_expenses ge ON es.expense_id = ge.id
       LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ${groupId}
+      LEFT JOIN users u ON ge.paid_by_user_id = u.user_id
       WHERE ge.group_id = ${groupId}
         AND es.user_id = ${userId}
         AND ge.paid_by_user_id != ${userId}
@@ -436,14 +510,18 @@ export async function settleUp(req, res) {
     // Calculate total amount settled
     const totalSettled = splits.reduce((sum, split) => sum + parseFloat(split.amount_owed), 0);
 
-    // Get user names and group name
+    // Get user names and group name (fallback to canonical users table)
     const fromUser = await sql`
-      SELECT user_name FROM group_members 
-      WHERE group_id = ${groupId} AND user_id = ${fromUserId}
+      SELECT COALESCE(gm.user_name, u.user_name) as user_name
+      FROM (SELECT ${fromUserId}::varchar as user_id) x
+      LEFT JOIN group_members gm ON gm.group_id = ${groupId} AND gm.user_id = x.user_id
+      LEFT JOIN users u ON u.user_id = x.user_id
     `;
     const toUser = await sql`
-      SELECT user_name FROM group_members 
-      WHERE group_id = ${groupId} AND user_id = ${toUserId}
+      SELECT COALESCE(gm.user_name, u.user_name) as user_name
+      FROM (SELECT ${toUserId}::varchar as user_id) x
+      LEFT JOIN group_members gm ON gm.group_id = ${groupId} AND gm.user_id = x.user_id
+      LEFT JOIN users u ON u.user_id = x.user_id
     `;
     const group = await sql`SELECT name FROM groups WHERE id = ${groupId}`;
 

@@ -37,6 +37,13 @@ export async function initDB() {
       UNIQUE(group_id, user_id)
     )`;
 
+    // Canonical users table (display names should be resolved from here)
+    await sql`CREATE TABLE IF NOT EXISTS users(
+      user_id VARCHAR(255) PRIMARY KEY,
+      user_name VARCHAR(255) NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
+
     // Group expenses table
     await sql`CREATE TABLE IF NOT EXISTS group_expenses(
       id SERIAL PRIMARY KEY,
@@ -81,6 +88,24 @@ export async function initDB() {
       console.log("Migration: Updated existing records with default user_name");
     } catch (updateError) {
       console.log("Migration update note:", updateError.message);
+    }
+
+    // Seed users table from existing group membership names (best-effort)
+    try {
+      await sql`
+        INSERT INTO users (user_id, user_name)
+        SELECT DISTINCT user_id, user_name
+        FROM group_members
+        WHERE user_id IS NOT NULL AND user_id <> ''
+          AND user_name IS NOT NULL AND user_name <> ''
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          user_name = EXCLUDED.user_name,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+      console.log("Migration: Seeded users table from group_members");
+    } catch (seedError) {
+      console.log("Migration seed note:", seedError.message);
     }
 
     // Migration: Add smart_split_enabled column to groups
