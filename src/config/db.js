@@ -83,6 +83,14 @@ export async function initDB() {
       console.log("Migration update note:", updateError.message);
     }
 
+    // Migration: Add smart_split_enabled column to groups
+    try {
+      await sql`ALTER TABLE groups ADD COLUMN IF NOT EXISTS smart_split_enabled BOOLEAN DEFAULT TRUE`;
+      console.log("Migration: smart_split_enabled column added/verified");
+    } catch (migrationError) {
+      console.log("Migration note:", migrationError.message);
+    }
+
     console.log("Database initialized successfully");
   } catch (error) {
     console.log("Error initializing DB", error);

@@ -475,6 +475,93 @@ export async function settleUp(req, res) {
   }
 }
 
+// Delete expense
+export async function deleteGroupExpense(req, res) {
+  try {
+    const { expenseId } = req.params;
+    const { userId } = req.body;
+
+    if (!expenseId) {
+      return res.status(400).json({ message: "Expense ID is required" });
+    }
+
+    // Get expense details and group info for notification before deletion
+    const expenseDetails = await sql`
+      SELECT ge.*, g.name as group_name, g.id as group_id, gm.user_name as payer_name
+      FROM group_expenses ge
+      INNER JOIN groups g ON ge.group_id = g.id
+      LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ge.group_id
+      WHERE ge.id = ${expenseId}
+    `;
+
+    if (expenseDetails.length === 0) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+
+    const expense = expenseDetails[0];
+
+    // Check if the user is authorized to delete (only the person who created it)
+    if (userId && expense.paid_by_user_id !== userId) {
+      return res.status(403).json({ message: "You are not authorized to delete this expense" });
+    }
+
+    // Delete expense (splits will be deleted automatically due to CASCADE)
+    await sql`DELETE FROM group_expenses WHERE id = ${expenseId}`;
+
+    // Send notification to group members about expense deletion
+    await notifyGroupMembers(
+      sql,
+      expense.group_id,
+      expense.paid_by_user_id,
+      "Expense Deleted",
+      `${expense.payer_name || 'Someone'} deleted '${expense.description}' expense in '${expense.group_name}'`,
+      {
+        type: 'expense_deleted',
+        groupId: expense.group_id,
+        description: expense.description,
+      }
+    );
+
+    res.status(200).json({ 
+      message: "Expense deleted successfully",
+      expenseId: expenseId
+    });
+  } catch (error) {
+    console.log("Error deleting group expense", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// Toggle Smart Split for a group
+export async function toggleSmartSplit(req, res) {
+  try {
+    const { groupId, enabled } = req.body;
+
+    if (!groupId || enabled === undefined) {
+      return res.status(400).json({ message: "Group ID and enabled status are required" });
+    }
+
+    const result = await sql`
+      UPDATE groups
+      SET smart_split_enabled = ${enabled}
+      WHERE id = ${groupId}
+      RETURNING *
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
+    res.status(200).json({
+      message: "Smart Split setting updated",
+      smartSplitEnabled: result[0].smart_split_enabled,
+    });
+  } catch (error) {
+    console.log("Error toggling smart split", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 // Leave a group
 export async function leaveGroup(req, res) {
   try {

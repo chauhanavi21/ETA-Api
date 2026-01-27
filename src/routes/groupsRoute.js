@@ -7,10 +7,12 @@ import {
   getGroupById,
   addGroupExpense,
   updateGroupExpense,
+  deleteGroupExpense,
   getGroupExpenses,
   getExpenseSplits,
   getGroupBalance,
   settleUp,
+  toggleSmartSplit,
   leaveGroup,
 } from "../controllers/groupsController.js";
 
@@ -27,11 +29,15 @@ router.get("/:groupId/members", getGroupMembers);
 // Expense operations
 router.post("/:groupId/expenses", addGroupExpense);
 router.put("/expenses/:expenseId", updateGroupExpense);
+router.delete("/expenses/:expenseId", deleteGroupExpense);
 router.get("/:groupId/expenses", getGroupExpenses);
 router.get("/expenses/:expenseId/splits", getExpenseSplits);
 
 // Balance
 router.get("/:groupId/balance/:userId", getGroupBalance);
 router.post("/settle", settleUp);
+
+// Smart Split
+router.post("/smart-split/toggle", toggleSmartSplit);
 
 export default router;
