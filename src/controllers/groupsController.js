@@ -247,6 +247,8 @@ export async function addGroupExpense(req, res) {
   try {
     const { groupId, description, amount, paidBy, category, splits } = req.body;
 
+    console.log('=== addGroupExpense ===', { groupId, description, amount, paidBy, category, splits });
+
     if (!groupId || !description || !amount || !paidBy || !category || !splits) {
       return res.status(400).json({ message: "All fields are required" });
     }
@@ -272,12 +274,16 @@ export async function addGroupExpense(req, res) {
       RETURNING *
     `;
 
+    console.log('Created expense:', expense[0]);
+
     // Create splits
     for (const split of splits) {
-      await sql`
+      const result = await sql`
         INSERT INTO expense_splits(expense_id, user_id, amount_owed)
         VALUES (${expense[0].id}, ${split.userId}, ${split.amount})
+        RETURNING *
       `;
+      console.log('Created split:', result[0]);
     }
 
     res.status(201).json(expense[0]);
@@ -415,6 +421,8 @@ export async function getGroupBalance(req, res) {
   try {
     const { groupId, userId } = req.params;
 
+    console.log(`=== getGroupBalance for user ${userId} in group ${groupId} ===`);
+
     // Get detailed breakdown - others who owe the user
     const owesMe = await sql`
       SELECT 
@@ -449,10 +457,15 @@ export async function getGroupBalance(req, res) {
       GROUP BY ge.paid_by_user_id
     `;
 
+    console.log('owesMe raw:', owesMe);
+    console.log('iOwe raw:', iOwe);
+
     // Calculate totals
     const totalLent = owesMe.reduce((sum, o) => sum + parseFloat(o.total), 0);
     const totalBorrowed = iOwe.reduce((sum, o) => sum + parseFloat(o.total), 0);
     const netBalance = totalLent - totalBorrowed;
+
+    console.log('Balance calculation:', { totalLent, totalBorrowed, netBalance });
 
     res.status(200).json({
       totalPaid: totalLent,  // What others owe you (you lent)
