@@ -204,6 +204,50 @@ export async function addGroupExpense(req, res) {
   }
 }
 
+// Update/Edit expense
+export async function updateGroupExpense(req, res) {
+  try {
+    const { expenseId } = req.params;
+    const { description, amount, category, splits } = req.body;
+
+    if (!description || !amount || !category || !splits) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (!Array.isArray(splits) || splits.length === 0) {
+      return res.status(400).json({ message: "Splits must be a non-empty array" });
+    }
+
+    // Update expense
+    const expense = await sql`
+      UPDATE group_expenses
+      SET description = ${description}, amount = ${amount}, category = ${category}
+      WHERE id = ${expenseId}
+      RETURNING *
+    `;
+
+    if (expense.length === 0) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+
+    // Delete existing splits
+    await sql`DELETE FROM expense_splits WHERE expense_id = ${expenseId}`;
+
+    // Create new splits
+    for (const split of splits) {
+      await sql`
+        INSERT INTO expense_splits(expense_id, user_id, amount_owed)
+        VALUES (${expenseId}, ${split.userId}, ${split.amount})
+      `;
+    }
+
+    res.status(200).json(expense[0]);
+  } catch (error) {
+    console.log("Error updating group expense", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 // Get group expenses
 export async function getGroupExpenses(req, res) {
   try {

@@ -6,6 +6,7 @@ import {
   getGroupMembers,
   getGroupById,
   addGroupExpense,
+  updateGroupExpense,
   getGroupExpenses,
   getExpenseSplits,
   getGroupBalance,
@@ -25,6 +26,7 @@ router.get("/:groupId/members", getGroupMembers);
 
 // Expense operations
 router.post("/:groupId/expenses", addGroupExpense);
+router.put("/expenses/:expenseId", updateGroupExpense);
 router.get("/:groupId/expenses", getGroupExpenses);
 router.get("/expenses/:expenseId/splits", getExpenseSplits);
 
