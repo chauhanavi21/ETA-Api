@@ -59,6 +59,14 @@ export async function initDB() {
       UNIQUE(expense_id, user_id)
     )`;
 
+    // User tokens table for push notifications
+    await sql`CREATE TABLE IF NOT EXISTS user_tokens(
+      id SERIAL PRIMARY KEY,
+      user_id VARCHAR(255) NOT NULL UNIQUE,
+      push_token VARCHAR(255) NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
+
     // Migration: Add user_name column if it doesn't exist
     try {
       await sql`ALTER TABLE group_members ADD COLUMN IF NOT EXISTS user_name VARCHAR(255) DEFAULT 'User'`;

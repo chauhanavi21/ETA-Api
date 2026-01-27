@@ -1,4 +1,5 @@
 import { sql } from "../config/db.js";
+import { notifyGroupMembers, notifyUser } from "../utils/pushNotifications.js";
 
 // Generate unique 6-character code
 function generateGroupCode() {
@@ -91,6 +92,21 @@ export async function joinGroup(req, res) {
       INSERT INTO group_members(group_id, user_id, user_name)
       VALUES (${group[0].id}, ${userId}, ${userName || 'User'})
     `;
+
+    // Send notification to group members
+    await notifyGroupMembers(
+      sql,
+      group[0].id,
+      userId,
+      "New Member Joined",
+      `${userName || 'Someone'} joined your group '${group[0].name}'`,
+      {
+        type: 'member_joined',
+        groupId: group[0].id,
+        userId: userId,
+        userName: userName || 'User',
+      }
+    );
 
     res.status(200).json(group[0]);
   } catch (error) {
@@ -239,6 +255,33 @@ export async function updateGroupExpense(req, res) {
         INSERT INTO expense_splits(expense_id, user_id, amount_owed)
         VALUES (${expenseId}, ${split.userId}, ${split.amount})
       `;
+    }
+
+    // Get expense details and group info for notification
+    const expenseDetails = await sql`
+      SELECT ge.*, g.name as group_name, gm.user_name as payer_name
+      FROM group_expenses ge
+      INNER JOIN groups g ON ge.group_id = g.id
+      LEFT JOIN group_members gm ON ge.paid_by_user_id = gm.user_id AND gm.group_id = ge.group_id
+      WHERE ge.id = ${expenseId}
+    `;
+
+    if (expenseDetails.length > 0) {
+      const exp = expenseDetails[0];
+      // Send notification to group members about expense edit
+      await notifyGroupMembers(
+        sql,
+        exp.group_id,
+        exp.paid_by_user_id,
+        "Expense Updated",
+        `${exp.payer_name || 'Someone'} updated '${exp.description}' expense in '${exp.group_name}'`,
+        {
+          type: 'expense_edited',
+          groupId: exp.group_id,
+          expenseId: expenseId,
+          description: exp.description,
+        }
+      );
     }
 
     res.status(200).json(expense[0]);
@@ -390,6 +433,38 @@ export async function settleUp(req, res) {
       `;
     }
 
+    // Calculate total amount settled
+    const totalSettled = splits.reduce((sum, split) => sum + parseFloat(split.amount_owed), 0);
+
+    // Get user names and group name
+    const fromUser = await sql`
+      SELECT user_name FROM group_members 
+      WHERE group_id = ${groupId} AND user_id = ${fromUserId}
+    `;
+    const toUser = await sql`
+      SELECT user_name FROM group_members 
+      WHERE group_id = ${groupId} AND user_id = ${toUserId}
+    `;
+    const group = await sql`SELECT name FROM groups WHERE id = ${groupId}`;
+
+    const fromName = fromUser[0]?.user_name || 'Someone';
+    const toName = toUser[0]?.user_name || 'Someone';
+    const groupName = group[0]?.name || 'a group';
+
+    // Notify the person who received the payment
+    await notifyUser(
+      sql,
+      toUserId,
+      "Payment Received",
+      `${fromName} settled up $${totalSettled.toFixed(2)} with you in '${groupName}'`,
+      {
+        type: 'settled_up',
+        groupId: groupId,
+        amount: totalSettled,
+        fromUserId: fromUserId,
+      }
+    );
+
     res.status(200).json({
       message: "Successfully settled up",
       settledCount: splits.length,
@@ -436,6 +511,16 @@ export async function leaveGroup(req, res) {
       });
     }
 
+    // Get user and group details before removal
+    const leavingUser = await sql`
+      SELECT user_name FROM group_members 
+      WHERE group_id = ${groupId} AND user_id = ${userId}
+    `;
+    const group = await sql`SELECT name FROM groups WHERE id = ${groupId}`;
+    
+    const userName = leavingUser[0]?.user_name || 'Someone';
+    const groupName = group[0]?.name || 'a group';
+
     // Remove user from group
     await sql`
       DELETE FROM group_members 
@@ -455,6 +540,21 @@ export async function leaveGroup(req, res) {
         groupDeleted: true
       });
     }
+
+    // Notify remaining group members
+    await notifyGroupMembers(
+      sql,
+      groupId,
+      userId,
+      "Member Left Group",
+      `${userName} left '${groupName}'`,
+      {
+        type: 'member_left',
+        groupId: groupId,
+        userId: userId,
+        userName: userName,
+      }
+    );
 
     res.status(200).json({ 
       message: "Successfully left group",
