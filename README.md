@@ -1,6 +1,6 @@
 # ETApp Backend API
 
-RESTful API server for ETApp expense tracker, built with Node.js, Express, and PostgreSQL.
+RESTful API server for ETApp expense tracker, built with Node.js, Express, and Firebase (Firestore + Firebase Auth).
 
 ## 🚀 Features
 
@@ -18,8 +18,8 @@ RESTful API server for ETApp expense tracker, built with Node.js, Express, and P
 
 - **Runtime**: Node.js
 - **Framework**: Express.js
-- **Database**: PostgreSQL (Neon serverless)
-- **ORM**: @neondatabase/serverless
+- **Database**: Firestore (via Firebase Admin SDK)
+- **Auth**: Firebase Auth (ID tokens verified server-side)
 - **Rate Limiting**: Upstash Redis
 - **Cron Jobs**: node-cron
 - **Environment**: dotenv
@@ -46,8 +46,12 @@ npm start
 Create a `.env` file in the `backend/` directory:
 
 ```env
-# Database
-DATABASE_URL=postgresql://user:pass@host/database?sslmode=require
+# Firebase Admin
+# Preferred: provide the service account JSON as a single env var.
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+
+# Alternative: set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON file path.
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 
 # Redis (Rate Limiting)
 UPSTASH_REDIS_REST_URL=https://your-redis-url.upstash.io
@@ -67,7 +71,7 @@ API_URL=https://your-api-url.com/api/health
 backend/
 ├── src/
 │   ├── config/
-│   │   ├── db.js              # Database connection & schema
+│   │   ├── firebase.js         # Firebase Admin init (Firestore/Auth)
 │   │   ├── upstash.js         # Redis client setup
 │   │   └── cron.js            # Keep-alive cron job
 │   │
@@ -97,87 +101,19 @@ backend/
 └── README.md
 ```
 
-## 🗄️ Database Schema
+## 🗄️ Firestore Data Model (High Level)
 
-### Tables
+This backend uses Firestore collections/subcollections instead of SQL tables.
 
-#### `transactions`
-Personal income/expense tracking
-```sql
-CREATE TABLE transactions (
-  id SERIAL PRIMARY KEY,
-  user_id VARCHAR(255) NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  amount DECIMAL(10,2) NOT NULL,
-  category VARCHAR(255) NOT NULL,
-  created_at DATE NOT NULL DEFAULT CURRENT_DATE
-);
-```
-
-#### `groups`
-Group information and codes
-```sql
-CREATE TABLE groups (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  code VARCHAR(6) UNIQUE NOT NULL,
-  created_by VARCHAR(255) NOT NULL,
-  currency VARCHAR(10) DEFAULT 'USD',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-#### `group_members`
-User memberships with names
-```sql
-CREATE TABLE group_members (
-  id SERIAL PRIMARY KEY,
-  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  user_id VARCHAR(255) NOT NULL,
-  user_name VARCHAR(255) NOT NULL,
-  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(group_id, user_id)
-);
-```
-
-#### `group_expenses`
-Group expense records
-```sql
-CREATE TABLE group_expenses (
-  id SERIAL PRIMARY KEY,
-  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-  description VARCHAR(255) NOT NULL,
-  amount DECIMAL(10,2) NOT NULL,
-  paid_by_user_id VARCHAR(255) NOT NULL,
-  category VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-#### `expense_splits`
-How expenses are divided
-```sql
-CREATE TABLE expense_splits (
-  id SERIAL PRIMARY KEY,
-  expense_id INTEGER NOT NULL REFERENCES group_expenses(id) ON DELETE CASCADE,
-  user_id VARCHAR(255) NOT NULL,
-  amount_owed DECIMAL(10,2) NOT NULL,
-  is_settled BOOLEAN DEFAULT FALSE,
-  settled_at TIMESTAMP,
-  UNIQUE(expense_id, user_id)
-);
-```
-
-#### `user_tokens`
-Push notification tokens
-```sql
-CREATE TABLE user_tokens (
-  id SERIAL PRIMARY KEY,
-  user_id VARCHAR(255) NOT NULL UNIQUE,
-  push_token VARCHAR(255) NOT NULL,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+- `users/{uid}`: user profile fields (e.g. `user_name`)
+  - `users/{uid}/groups/{groupId}`: membership index
+  - `users/{uid}/transactions/{transactionId}`: personal transactions
+- `groups/{groupId}`: group metadata (e.g. `name`, `code`, `smart_split_enabled`)
+  - `groups/{groupId}/members/{uid}`: group members
+  - `groups/{groupId}/expenses/{expenseId}`: group expenses
+  - `groups/{groupId}/splits/{splitId}`: expense splits (settlement state)
+- `groupCodes/{code}`: maps a join code to `group_id`
+- `userTokens/{uid}`: Expo push token per user
 
 ## 📡 API Endpoints
 
@@ -379,9 +315,9 @@ await notifyUser(
 - **Middleware**: `backend/src/middleware/rateLimiter.js`
 - **Configuration**: Adjustable limits per endpoint
 
-### SQL Injection Prevention
-- **Parameterized Queries**: All queries use bound parameters
-- **Neon Postgres**: Automatic sanitization
+### Firestore Access
+- Firestore is accessed via the Firebase Admin SDK (server-side)
+- Authentication is enforced by verifying Firebase Auth ID tokens
 
 ### Authorization
 - User can only modify their own data
@@ -447,7 +383,7 @@ curl http://localhost:5001/api/groups/1/balance/user_123
 
 ### Recommended Platforms
 - **Render**: Easy setup, free tier available
-- **Railway**: Simple deployment, PostgreSQL included
+- **Railway**: Simple deployment
 - **Heroku**: Classic PaaS option
 - **Vercel/Netlify**: Serverless functions
 
@@ -463,9 +399,9 @@ curl http://localhost:5001/api/groups/1/balance/user_123
    - Add all variables from `.env`
    - Set `NODE_ENV=production`
 
-3. **Database**
-   - Use Neon (serverless PostgreSQL)
-   - Copy connection string to `DATABASE_URL`
+3. **Firebase**
+  - Create a Firebase project with Firestore enabled
+  - Create a service account and set `FIREBASE_SERVICE_ACCOUNT_JSON` on the host
 
 4. **Redis**
    - Create Upstash Redis database
@@ -498,18 +434,14 @@ render logs
 railway logs
 ```
 
-### Database Monitoring
-- Neon dashboard for query performance
-- Connection pooling stats
-- Database size and usage
+### Firestore Monitoring
+- Firebase Console (Firestore usage, indexes, latency)
 
 ## 🐛 Troubleshooting
 
 ### Database Connection Issues
-```bash
-# Test connection
-node -e "const {sql} = require('./src/config/db'); sql\`SELECT 1\`.then(console.log)"
-```
+- Ensure `FIREBASE_SERVICE_ACCOUNT_JSON` is set (or `GOOGLE_APPLICATION_CREDENTIALS` on the host)
+- Check backend logs for Firebase Admin initialization errors
 
 ### Rate Limiting Not Working
 - Verify Upstash credentials
@@ -533,11 +465,9 @@ node -e "const {sql} = require('./src/config/db'); sql\`SELECT 1\`.then(console.
 npm run dev  # Uses nodemon for auto-restart
 ```
 
-### Database Migrations
-```javascript
-// Add to src/config/db.js initDB()
-await sql`ALTER TABLE table_name ADD COLUMN new_col TYPE`;
-```
+### Data Model Changes
+- Update Firestore document shapes in controllers
+- Add Firestore composite indexes if a query requires it (Firebase Console will suggest indexes)
 
 ### Debug Mode
 ```javascript
@@ -551,9 +481,9 @@ debug('Processing request');
 
 ## 📈 Performance Optimization
 
-- **Connection Pooling**: Neon handles automatically
+- **Firestore Queries**: Prefer indexed queries and keep reads bounded
 - **Rate Limiting**: Prevents abuse
-- **Indexed Queries**: Add indexes to frequently queried columns
+- **Indexes**: Add composite indexes when Firestore requires them
 - **Caching**: Consider Redis caching for hot data
 
 ## 🤝 Contributing

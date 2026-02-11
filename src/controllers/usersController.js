@@ -1,9 +1,17 @@
-import { sql } from "../config/db.js";
+import admin from "firebase-admin";
+import { initFirebase } from "../config/firebase.js";
+
+initFirebase();
+
+function getDb() {
+  return admin.firestore();
+}
 
 // Update user's name across all tables in the database
 export async function updateUserName(req, res) {
   try {
-    const { userId, userName } = req.body;
+    const { userName } = req.body;
+    const userId = req.user?.uid;
 
     if (!userId || !userName) {
       return res.status(400).json({ message: "User ID and user name are required" });
@@ -14,27 +22,39 @@ export async function updateUserName(req, res) {
       return res.status(400).json({ message: "User name cannot be empty" });
     }
 
-    // Update canonical users table
-    await sql`
-      INSERT INTO users (user_id, user_name)
-      VALUES (${userId}, ${trimmedName})
-      ON CONFLICT (user_id)
-      DO UPDATE SET user_name = EXCLUDED.user_name, updated_at = CURRENT_TIMESTAMP
-    `;
+    const db = getDb();
 
-    // Update user_name in group_members table for all groups this user is in
-    const updatedMembers = await sql`
-      UPDATE group_members
-      SET user_name = ${trimmedName}
-      WHERE user_id = ${userId}
-      RETURNING group_id
-    `;
+    await db.collection("users").doc(String(userId)).set(
+      {
+        user_name: trimmedName,
+        updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
-    console.log(`Updated user name for ${userId} in ${updatedMembers.length} groups`);
+    const groupsSnap = await db.collection("users").doc(String(userId)).collection("groups").get();
+    const groupIds = groupsSnap.docs.map((d) => d.id);
+
+    let updatedCount = 0;
+    for (let i = 0; i < groupIds.length; i += 400) {
+      const chunk = groupIds.slice(i, i + 400);
+      const batch = db.batch();
+      for (const groupId of chunk) {
+        batch.set(
+          db.collection("groups").doc(String(groupId)).collection("members").doc(String(userId)),
+          { user_name: trimmedName },
+          { merge: true }
+        );
+        updatedCount++;
+      }
+      await batch.commit();
+    }
+
+    console.log(`Updated user name for ${userId} in ${updatedCount} groups`);
 
     res.status(200).json({
       message: "User name updated successfully across all groups",
-      groupsUpdated: updatedMembers.length,
+      groupsUpdated: updatedCount,
     });
   } catch (error) {
     console.log("Error updating user name", error);
@@ -51,24 +71,19 @@ export async function getUserProfile(req, res) {
       return res.status(400).json({ message: "User ID is required" });
     }
 
-    // Get user's groups count
-    const groups = await sql`
-      SELECT COUNT(*) as group_count
-      FROM group_members
-      WHERE user_id = ${userId}
-    `;
+    if (!req.user?.uid || String(req.user.uid) !== String(userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
 
-    const userInfo = await sql`
-      SELECT user_name
-      FROM users
-      WHERE user_id = ${userId}
-      LIMIT 1
-    `;
+    const db = getDb();
+    const groupsSnap = await db.collection("users").doc(String(userId)).collection("groups").get();
+    const userSnap = await db.collection("users").doc(String(userId)).get();
+    const userName = userSnap.exists ? userSnap.data().user_name : null;
 
     res.status(200).json({
       userId: userId,
-      userName: userInfo[0]?.user_name || null,
-      groupCount: parseInt(groups[0].group_count) || 0,
+      userName: userName || null,
+      groupCount: groupsSnap.size || 0,
     });
   } catch (error) {
     console.log("Error getting user profile", error);

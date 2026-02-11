@@ -1,21 +1,30 @@
-import { sql } from "../config/db.js";
+import admin from "firebase-admin";
+import { initFirebase } from "../config/firebase.js";
+
+initFirebase();
+
+function getDb() {
+  return admin.firestore();
+}
 
 // Register or update user's push token
 export async function registerPushToken(req, res) {
   try {
-    const { userId, pushToken } = req.body;
+    const { pushToken } = req.body;
+    const userId = req.user?.uid;
 
     if (!userId || !pushToken) {
       return res.status(400).json({ message: "User ID and push token are required" });
     }
 
-    // Insert or update push token
-    await sql`
-      INSERT INTO user_tokens(user_id, push_token, updated_at)
-      VALUES (${userId}, ${pushToken}, CURRENT_TIMESTAMP)
-      ON CONFLICT (user_id)
-      DO UPDATE SET push_token = ${pushToken}, updated_at = CURRENT_TIMESTAMP
-    `;
+    const db = getDb();
+    await db.collection("userTokens").doc(String(userId)).set(
+      {
+        pushToken: String(pushToken),
+        updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     res.status(200).json({ message: "Push token registered successfully" });
   } catch (error) {
@@ -27,13 +36,13 @@ export async function registerPushToken(req, res) {
 // Remove user's push token (when they log out)
 export async function unregisterPushToken(req, res) {
   try {
-    const { userId } = req.body;
-
+    const userId = req.user?.uid;
     if (!userId) {
       return res.status(400).json({ message: "User ID is required" });
     }
 
-    await sql`DELETE FROM user_tokens WHERE user_id = ${userId}`;
+    const db = getDb();
+    await db.collection("userTokens").doc(String(userId)).delete();
 
     res.status(200).json({ message: "Push token removed successfully" });
   } catch (error) {

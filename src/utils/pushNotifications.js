@@ -1,7 +1,9 @@
 import { Expo } from 'expo-server-sdk';
+import { initFirebase } from '../config/firebase.js';
 
 // Create a new Expo SDK client
 const expo = new Expo();
+const { db } = initFirebase();
 
 /**
  * Send push notification to specific users
@@ -55,19 +57,28 @@ export async function sendPushNotification(pushTokens, title, body, data = {}) {
  * @param {String} body - Notification body
  * @param {Object} data - Additional data
  */
-export async function notifyGroupMembers(sql, groupId, excludeUserId, title, body, data = {}) {
+export async function notifyGroupMembers(groupId, excludeUserId, title, body, data = {}) {
   try {
-    // Get push tokens for all group members except the excluded user
-    const members = await sql`
-      SELECT push_token 
-      FROM group_members gm
-      INNER JOIN user_tokens ut ON gm.user_id = ut.user_id
-      WHERE gm.group_id = ${groupId} 
-        AND gm.user_id != ${excludeUserId}
-        AND ut.push_token IS NOT NULL
-    `;
+    const membersSnap = await db
+      .collection('groups')
+      .doc(String(groupId))
+      .collection('members')
+      .get();
 
-    const pushTokens = members.map(m => m.push_token).filter(Boolean);
+    const userIds = [];
+    membersSnap.forEach((doc) => {
+      if (doc.id !== String(excludeUserId)) userIds.push(doc.id);
+    });
+
+    if (userIds.length === 0) return;
+
+    const tokenSnaps = await db.getAll(
+      ...userIds.map((uid) => db.collection('userTokens').doc(String(uid)))
+    );
+
+    const pushTokens = tokenSnaps
+      .map((s) => (s.exists ? s.data().pushToken : null))
+      .filter(Boolean);
     
     if (pushTokens.length > 0) {
       await sendPushNotification(pushTokens, title, body, data);
@@ -86,19 +97,14 @@ export async function notifyGroupMembers(sql, groupId, excludeUserId, title, bod
  * @param {String} body - Notification body
  * @param {Object} data - Additional data
  */
-export async function notifyUser(sql, userId, title, body, data = {}) {
+export async function notifyUser(userId, title, body, data = {}) {
   try {
-    const user = await sql`
-      SELECT push_token 
-      FROM user_tokens 
-      WHERE user_id = ${userId} 
-        AND push_token IS NOT NULL
-    `;
+    const snap = await db.collection('userTokens').doc(String(userId)).get();
+    const token = snap.exists ? snap.data().pushToken : null;
+    if (!token) return;
 
-    if (user.length > 0 && user[0].push_token) {
-      await sendPushNotification([user[0].push_token], title, body, data);
-      console.log(`Sent notification to user ${userId}`);
-    }
+    await sendPushNotification([token], title, body, data);
+    console.log(`Sent notification to user ${userId}`);
   } catch (error) {
     console.error('Error notifying user:', error);
   }

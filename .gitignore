@@ -4,6 +4,12 @@
 **/.env
 **/.env.*
 
+# Firebase Admin credentials (NEVER commit)
+serviceAccount.json
+serviceAccount.*.json
+**/serviceAccount.json
+**/serviceAccount.*.json
+
 # Node
 node_modules/
 npm-debug.log*
