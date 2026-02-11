@@ -43,15 +43,22 @@ npm start
 
 ## 🔐 Environment Variables
 
-Create a `.env` file in the `backend/` directory:
+Create a `.env` file in the `backend/` directory (or set these variables in your hosting provider):
 
 ```env
 # Firebase Admin
-# Preferred: provide the service account JSON as a single env var.
+# Preferred (hosting-friendly): provide the service account JSON as a single env var.
 FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+
+# Optional (mostly for GCP): use Application Default Credentials (ADC)
+# FIREBASE_USE_ADC=true
 
 # Alternative: set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON file path.
 # GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+
+# Optional (NOT recommended for hosting): allow reading a local serviceAccount.json file.
+# FIREBASE_ALLOW_CREDENTIAL_FILE=true
+# FIREBASE_SERVICE_ACCOUNT_PATH=./serviceAccount.json
 
 # Redis (Rate Limiting)
 UPSTASH_REDIS_REST_URL=https://your-redis-url.upstash.io
@@ -64,6 +71,8 @@ NODE_ENV=development
 # Cron Job (Production only)
 API_URL=https://your-api-url.com/api/health
 ```
+
+Tip: You can copy [backend/.env.example](backend/.env.example) to `backend/.env`.
 
 ## 📁 Project Structure
 
