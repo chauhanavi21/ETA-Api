@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+let cached = null;
+let firestoreSettingsApplied = false;
+
 function tryReadServiceAccountJson(filePath) {
   try {
     if (!filePath) return null;
@@ -142,6 +145,8 @@ function buildCredential() {
 }
 
 export function initFirebase() {
+  if (cached) return cached;
+
   if (getApps().length === 0) {
     initializeApp({ credential: buildCredential() });
   }
@@ -149,8 +154,17 @@ export function initFirebase() {
   const db = getFirestore();
   const auth = getAuth();
 
-  // Firestore settings (keep defaults; set ignoreUndefinedProperties for convenience)
-  db.settings({ ignoreUndefinedProperties: true });
+  // Firestore settings can only be applied once, and only before the instance is used.
+  if (!firestoreSettingsApplied) {
+    try {
+      db.settings({ ignoreUndefinedProperties: true });
+    } catch {
+      // If Firestore was already used elsewhere, settings() may throw.
+      // This setting is a convenience; safely ignore in that case.
+    }
+    firestoreSettingsApplied = true;
+  }
 
-  return { db, auth };
+  cached = { db, auth };
+  return cached;
 }
