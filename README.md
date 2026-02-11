@@ -47,8 +47,16 @@ Create a `.env` file in the `backend/` directory (or set these variables in your
 
 ```env
 # Firebase Admin
-# Preferred (hosting-friendly): provide the service account JSON as a single env var.
-FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+# Recommended (hosting-friendly): split the service account into separate env vars.
+FIREBASE_PROJECT_ID=etapp-607b7
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@etapp-607b7.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n
+
+# Alternatives:
+# - One-line JSON
+# FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+# - Base64 JSON
+# FIREBASE_SERVICE_ACCOUNT_JSON_BASE64=...
 
 # Optional (mostly for GCP): use Application Default Credentials (ADC)
 # FIREBASE_USE_ADC=true
