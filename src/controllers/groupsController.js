@@ -239,6 +239,11 @@ export async function getUserGroups(req, res) {
     const memberships = await firestore.collection("users").doc(String(userId)).collection("groups").orderBy("joined_at", "desc").get();
     const groupIds = memberships.docs.map((d) => d.id);
 
+    // If user has no groups, return empty array
+    if (groupIds.length === 0) {
+      return res.status(200).json([]);
+    }
+
     const groupSnaps = await firestore.getAll(
       ...groupIds.map((gid) => firestore.collection("groups").doc(String(gid)))
     );
