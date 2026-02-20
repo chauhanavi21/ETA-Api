@@ -36,6 +36,19 @@ app.use("/api/groups", groupsRoute);
 app.use("/api/notifications", notificationsRoute);
 app.use("/api/users", usersRoute);
 
+// 404 handler for unknown routes
+app.use((req, res) => {
+  res.status(404).json({ message: "Route not found" });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || "Internal server error";
+  res.status(status).json({ message });
+});
+
 app.listen(PORT, () => {
   console.log("Server is up and running on PORT:", PORT);
 });
