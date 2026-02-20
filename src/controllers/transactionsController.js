@@ -16,6 +16,31 @@ function getDb() {
   return admin.firestore();
 }
 
+function toTransactionTimestamp(dateInput) {
+  if (dateInput === undefined) return undefined;
+
+  if (dateInput === null || dateInput === "") {
+    const err = new Error("Invalid date");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const parsedDate = new Date(dateInput);
+  if (Number.isNaN(parsedDate.getTime())) {
+    const err = new Error("Invalid date");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (parsedDate.getTime() > Date.now()) {
+    const err = new Error("Date cannot be in the future");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return admin.firestore.Timestamp.fromDate(parsedDate);
+}
+
 export async function createTransaction(req, res) {
     try {
       const { title, amount, category, user_id, date } = req.body;
@@ -38,8 +63,8 @@ export async function createTransaction(req, res) {
       const txnRef = db.collection("users").doc(String(user_id)).collection("transactions").doc();
       const summaryRef = db.collection("users").doc(String(user_id)).collection("meta").doc("transactionSummary");
 
-      // Use provided date or current timestamp
-      const transactionDate = date ? admin.firestore.Timestamp.fromDate(new Date(date)) : admin.firestore.FieldValue.serverTimestamp();
+      const parsedDate = toTransactionTimestamp(date);
+      const transactionDate = parsedDate ?? admin.firestore.FieldValue.serverTimestamp();
 
       await db.runTransaction(async (tx) => {
         tx.create(txnRef, {
@@ -165,7 +190,7 @@ export async function deleteTransaction(req, res) {
 export async function updateTransaction(req, res) {
   try {
     const { id } = req.params;
-    const { title, amount, category } = req.body;
+    const { title, amount, category, date } = req.body;
 
     if (!id) {
       return res.status(400).json({ message: "Invalid transaction ID" });
@@ -174,7 +199,7 @@ export async function updateTransaction(req, res) {
     const userId = req.user?.uid;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    if (!title && amount === undefined && !category) {
+    if (!title && amount === undefined && !category && date === undefined) {
       return res.status(400).json({ message: "No fields to update" });
     }
 
@@ -188,6 +213,8 @@ export async function updateTransaction(req, res) {
         return res.status(400).json({ message: "Amount must not be zero" });
       }
     }
+
+    const newCreatedAt = toTransactionTimestamp(date);
 
     const db = getDb();
     const txnRef = db.collection("users").doc(String(userId)).collection("transactions").doc(String(id));
@@ -208,6 +235,7 @@ export async function updateTransaction(req, res) {
       if (title !== undefined) updates.title = String(title).trim();
       if (category !== undefined) updates.category = String(category).trim();
       if (newAmountCents !== null) updates.amountCents = newAmountCents;
+      if (newCreatedAt !== undefined) updates.created_at = newCreatedAt;
 
       tx.update(txnRef, updates);
 
